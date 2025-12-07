@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Expense Tracker</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for appearance */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Light gray background */
+        }
+        .balance-card {
+            transition: all 0.3s ease-in-out;
+            cursor: default;
+        }
+        .balance-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        /* Ensures the history section scrolls smoothly on touch devices */
+        .scroll-history {
+            -webkit-overflow-scrolling: touch;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app" class="min-h-screen p-4 sm:p-8 flex justify-center">
+        <!-- Content will be rendered here by JavaScript -->
+    </div>
+
+    <script type="module">
+        // All Firebase SDK imports have been removed.
+
+        // --- Application State ---
+        let transactions = [];
+        let currentError = null;
+        let transactionType = 'expense'; // default
+
+        // --- Configuration Constants ---
+        const LOCAL_STORAGE_KEY = 'financeFlowTrackerData'; // Key for local storage
+        const EXPENSE_CATEGORIES = [
+            "Grocery",
+            "Salon",
+            "Rent",
+            "Travel (Office)",
+            "Travel (Elsewhere)",
+            "Movie",
+            "Other Expense"
+        ];
+
+
+        // --- Utility Functions ---
+
+        /** Formats a number as INR currency (Rupees) without decimals. */
+        const formatCurrency = (value) => {
+            // Using Intl.NumberFormat for INR with minimumFractionDigits set to 0
+            return new Intl.NumberFormat('en-IN', {
+                style: 'currency',
+                currency: 'INR',
+                minimumFractionDigits: 0, 
+                maximumFractionDigits: 0,
+            }).format(value).replace('₹', 'Rs '); // Replace the Unicode Rupee symbol with 'Rs '
+        };
+
+        /** Updates the error message display in the UI. */
+        const setError = (message) => {
+            currentError = message;
+            renderApp();
+        };
+
+        // --- Local Storage Logic ---
+
+        /** Loads transactions from Local Storage. */
+        const loadTransactions = () => {
+            try {
+                const json = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (json) {
+                    let loadedData = JSON.parse(json);
+                    // Ensure dates are correctly parsed and sort by newest first
+                    transactions = loadedData.map(tx => ({
+                        ...tx,
+                        createdAt: new Date(tx.createdAt)
+                    })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+                } else {
+                    transactions = [];
+                }
+                setError(null);
+            } catch (e) {
+                console.error("Error loading from Local Storage:", e);
+                setError(`Error loading data from local storage: ${e.message}`);
+            }
+        };
+
+        /** Saves current transactions to Local Storage. */
+        const saveTransactions = () => {
+            try {
+                // Only save the necessary data
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(transactions));
+            } catch (e) {
+                console.error("Error saving to Local Storage:", e);
+                setError(`Error saving data to local storage: ${e.message}`);
+            }
+        };
+
+        // --- Core Logic ---
+
+        /** Calculates the total income, total expense, and the resulting net balance. */
+        const calculateBreakdown = () => {
+            return transactions.reduce((acc, tx) => {
+                const amountVal = parseFloat(tx.amount) || 0;
+                if (tx.type === 'income') {
+                    acc.totalIncome += amountVal;
+                } else { // 'expense'
+                    acc.totalExpense += amountVal;
+                }
+                acc.netBalance = acc.totalIncome - acc.totalExpense;
+                return acc;
+            }, { netBalance: 0, totalIncome: 0, totalExpense: 0 });
+        };
+
+
+        const initializeAppLocal = () => {
+            // 1. Load data from local storage (synchronous)
+            loadTransactions();
+            
+            // 2. Render the app immediately
+            renderApp();
+        };
+
+        // --- UI Rendering Functions ---
+
+        /** Renders the summary cards (Income, Expense, Net Balance). */
+        const renderSummaryCards = (breakdown) => {
+            const { netBalance, totalIncome, totalExpense } = breakdown;
+            
+            // Card 1: Total Income (The original/starting balance component)
+            const incomeCard = `
+                <div class="balance-card p-4 sm:p-6 rounded-xl shadow-lg bg-green-500 text-white w-full">
+                    <h2 class="text-sm font-light uppercase tracking-wider opacity-90">Total Income (Original/Deposits)</h2>
+                    <p class="text-3xl sm:text-4xl font-extrabold mt-1 tracking-tight">
+                        ${formatCurrency(totalIncome)}
+                    </p>
+                </div>
+            `;
+
+            // Card 2: Total Expense
+            const expenseCard = `
+                <div class="balance-card p-4 sm:p-6 rounded-xl shadow-lg bg-red-500 text-white w-full">
+                    <h2 class="text-sm font-light uppercase tracking-wider opacity-90">Total Expense</h2>
+                    <p class="text-3xl sm:text-4xl font-extrabold mt-1 tracking-tight">
+                        ${formatCurrency(totalExpense)}
+                    </p>
+                </div>
+            `;
+
+            // Card 3: Net Balance (Current Balance) - Made larger and more prominent
+            const isPositive = netBalance >= 0;
+            const netColorClass = isPositive ? 'bg-indigo-600' : 'bg-red-700';
+            const netIcon = isPositive ? '💰' : '📉';
+
+            const netCard = `
+                <div class="balance-card p-4 sm:p-6 rounded-xl shadow-lg ${netColorClass} text-white w-full md:col-span-3">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-sm font-light uppercase tracking-wider opacity-90">Net Balance (Current)</h2>
+                        <span class="text-2xl font-bold">${netIcon}</span>
+                    </div>
+                    <p class="text-4xl sm:text-5xl font-extrabold mt-1 tracking-tight">
+                        ${formatCurrency(netBalance)}
+                    </p>
+                </div>
+            `;
+            
+            // Layout is adjusted for mobile: Income/Expense on small screens, Net Balance prominently below.
+            // On MD screens and up, Net Balance takes up the third column.
+            return `
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    ${incomeCard}
+                    ${expenseCard}
+                    <div class="col-span-2 md:col-span-1">
+                        ${netCard}
+                    </div>
+                </div>
+            `;
+        };
+
+        /** Renders the list of past transactions. */
+        const renderHistory = () => {
+            if (transactions.length === 0) {
+                return `
+                    <p class="text-gray-500 italic p-4 text-center">
+                        No transactions recorded yet. Add your first income or expense!
+                    </p>
+                `;
+            }
+
+            return transactions.map(tx => {
+                const isExpense = tx.type === 'expense';
+                const amountColor = isExpense ? 'text-red-600' : 'text-green-600';
+                const sign = isExpense ? '-' : '+';
+                
+                // Updated dateOptions to explicitly include month, day, year, hour, and minute
+                const dateOptions = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+                const dateStr = tx.createdAt instanceof Date 
+                    // Use toLocaleString to get both date and time (including month)
+                    ? tx.createdAt.toLocaleString('en-US', dateOptions)
+                    : 'Date missing';
+
+                return `
+                    <div class="flex justify-between items-center p-3 border-l-4 ${isExpense ? 'border-red-100' : 'border-green-100'} hover:bg-gray-50 rounded-lg">
+                        <div class="flex flex-col min-w-0 pr-4">
+                            <span class="font-medium text-gray-800 truncate">${tx.description}</span>
+                            <span class="text-xs text-gray-400 mt-0.5">${dateStr}</span>
+                        </div>
+                        <span class="font-semibold ${amountColor} flex-shrink-0">
+                            ${sign} ${formatCurrency(tx.amount)}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+        };
+
+        /** Renders the entire application container. */
+        const renderApp = () => {
+            const appContainer = document.getElementById('app');
+            const breakdown = calculateBreakdown();
+            
+            // --- Logic to pre-fill initial income on empty ledger ---
+            let initialBalanceMessage = '';
+            let currentTempDescription = '';
+            let currentTempAmount = '';
+            
+            if (transactions.length === 0) {
+                // If ledger is empty, guide the user to set their initial balance
+                transactionType = 'income'; // Force income selection
+                currentTempAmount = '29385'; 
+                currentTempDescription = 'Initial Deposit';
+                initialBalanceMessage = `
+                    <div class="p-3 mb-4 text-sm text-green-700 bg-green-100 rounded-lg" role="alert">
+                        <span class="font-medium">Welcome!</span> To set your starting balance of Rs 29,385, the form below is pre-filled. Just click 
+                        <span class="font-semibold">"Record Income"</span>.
+                    </div>
+                `;
+            } else {
+                // Clear temporary defaults once transactions exist, and reset type to expense for next entry
+                currentTempAmount = '';
+                currentTempDescription = '';
+            }
+            // --- End pre-fill logic ---
+
+            // --- Dropdown generation ---
+            let categories = [...EXPENSE_CATEGORIES];
+            let selectPlaceholder = 'Select a category...';
+            
+            if (transactions.length === 0) {
+                // For initial deposit, temporarily add the initial deposit description
+                categories.unshift(currentTempDescription);
+                selectPlaceholder = 'Transaction description...';
+            }
+
+            const categoriesHtml = categories.map(cat => `
+                <option value="${cat}" ${cat === currentTempDescription ? 'selected' : ''}>${cat}</option>
+            `).join('');
+
+            const descriptionInputHtml = `
+                <select
+                    id="description"
+                    required
+                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm appearance-none bg-white"
+                >
+                    <option value="" disabled selected>${selectPlaceholder}</option>
+                    ${categoriesHtml}
+                </select>
+            `;
+            // --- End Dropdown generation ---
+
+
+            const errorHtml = currentError ? `
+                <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-lg shadow-sm" role="alert">
+                    <p class="font-bold">Error</p>
+                    <p>${currentError}</p>
+                </div>
+            ` : '';
+
+            // Determine button styling based on current transactionType
+            const expenseButtonClass = transactionType === 'expense' 
+                ? 'bg-red-500 text-white shadow-md' 
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200';
+            
+            const incomeButtonClass = transactionType === 'income' 
+                ? 'bg-green-500 text-white shadow-md' 
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200';
+
+            const submitButtonText = `Record ${transactionType === 'expense' ? 'Expense' : 'Income'}`;
+
+
+            appContainer.innerHTML = `
+                <div class="w-full max-w-4xl space-y-6 sm:space-y-8">
+                    <header class="text-center pt-4 pb-2">
+                        <h1 class="text-3xl sm:text-4xl font-extrabold text-indigo-700">
+                            Daily Expense Tracker
+                        </h1>
+                        <p class="text-lg text-gray-500 mt-1">Manage your income and expenses effortlessly.</p>
+                        <p class="text-xs text-gray-400 mt-1">
+                            Data saved securely only in this browser's local storage.
+                        </p>
+                    </header>
+
+                    ${renderSummaryCards(breakdown)}
+
+                    ${errorHtml}
+
+                    <!-- Add Transaction Form -->
+                    <div class="bg-white p-6 rounded-xl shadow-xl">
+                        <h3 class="text-2xl font-semibold text-gray-800 mb-4">Record New Transaction</h3>
+                        ${initialBalanceMessage}
+                        <form id="transactionForm" class="space-y-4">
+                            
+                            <!-- Transaction Type Selector -->
+                            <div class="flex space-x-2 sm:space-x-4">
+                                <button
+                                    type="button"
+                                    data-type="expense"
+                                    class="type-selector flex-1 py-2 rounded-lg text-sm sm:text-base font-medium transition-colors ${expenseButtonClass}"
+                                >
+                                    Expense
+                                </button>
+                                <button
+                                    type="button"
+                                    data-type="income"
+                                    class="type-selector flex-1 py-2 rounded-lg text-sm sm:text-base font-medium transition-colors ${incomeButtonClass}"
+                                >
+                                    Income
+                                </button>
+                            </div>
+
+                            <!-- Description Dropdown -->
+                            <div>
+                                <label for="description" class="block text-sm font-medium text-gray-700">
+                                    Description / Category
+                                </label>
+                                ${descriptionInputHtml}
+                            </div>
+
+                            <!-- Amount Input -->
+                            <div>
+                                <label for="amount" class="block text-sm font-medium text-gray-700">
+                                    Amount
+                                </label>
+                                <div class="relative mt-1">
+                                    <input
+                                        id="amount"
+                                        type="number"
+                                        step="1" 
+                                        min="1"
+                                        placeholder="0"
+                                        required
+                                        value="${currentTempAmount}"
+                                        class="block w-full pl-10 pr-12 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                    >
+                                    <div class="absolute inset-y-0 left-0 flex items-center pl-3">
+                                        <span class="text-gray-500 sm:text-sm">Rs</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <button
+                                id="submitBtn"
+                                type="submit"
+                                class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-lg text-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-transform transform active:scale-95"
+                            >
+                                ${submitButtonText}
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Transaction History -->
+                    <div class="w-full bg-white p-6 rounded-xl shadow-xl">
+                        <h3 class="text-2xl font-semibold text-gray-800 mb-4 border-b pb-2">Transaction History</h3>
+                        <div class="max-h-96 overflow-y-auto scroll-history space-y-3">
+                            ${renderHistory()}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Re-attach event listeners after rendering
+            attachEventListeners();
+        };
+
+        // --- Event Handlers ---
+
+        const handleTypeChange = (newType) => {
+            transactionType = newType;
+            renderApp(); // Re-render to update button styles and submit text
+        };
+
+        const handleAddTransaction = async (e) => {
+            e.preventDefault();
+
+            const form = e.target;
+            const amountInput = form.querySelector('#amount');
+            const descriptionInput = form.querySelector('#description');
+            
+            const numAmount = parseFloat(amountInput.value); 
+            const description = descriptionInput.value.trim();
+
+            if (isNaN(numAmount) || numAmount <= 0 || !Number.isInteger(numAmount)) {
+                return setError("Please enter a valid whole number amount greater than zero.");
+            }
+            if (!description || description === 'Select a category...' || description === 'Transaction description...') {
+                return setError("Please select a valid description/category for the transaction.");
+            }
+            
+            // Clear previous error message
+            setError(null);
+
+            const newTransaction = {
+                id: crypto.randomUUID(), // Unique ID for local tracking
+                description: description,
+                amount: numAmount,
+                type: transactionType,
+                createdAt: new Date(), // Use local timestamp
+            };
+
+            // Disable form during submission
+            const submitButton = form.querySelector('#submitBtn');
+            const originalText = submitButton.textContent;
+            submitButton.disabled = true;
+            submitButton.textContent = 'Saving...';
+            
+            try {
+                // 1. Add new transaction to the local array
+                transactions.unshift(newTransaction); // Add to the start
+                
+                // 2. Save the updated array to local storage
+                saveTransactions();
+
+                // Clear form fields in the DOM immediately
+                amountInput.value = '';
+                // Since the description is a <select> and often resets automatically on re-render, 
+                // we'll rely on the re-render to handle its state, but we manually reset type if needed.
+                
+                // Reset transactionType back to expense if the first transaction was just completed
+                if (transactions.length === 1 && transactionType === 'income') {
+                     transactionType = 'expense';
+                }
+                
+                // Manually call renderApp since we don't have an onSnapshot listener
+                renderApp();
+
+            } catch (e) {
+                console.error("Error adding transaction locally: ", e);
+                setError(`Failed to save transaction locally: ${e.message}.`);
+            } finally {
+                // Re-enable button after operation 
+                submitButton.disabled = false;
+                submitButton.textContent = originalText; 
+            }
+        };
+
+        const attachEventListeners = () => {
+            const form = document.getElementById('transactionForm');
+            if (form) {
+                // Submit handler
+                form.onsubmit = handleAddTransaction;
+
+                // Type selector handlers
+                document.querySelectorAll('.type-selector').forEach(button => {
+                    button.onclick = (e) => handleTypeChange(e.currentTarget.dataset.type);
+                });
+            }
+        };
+
+        // --- Initial Load ---
+        window.addEventListener('load', initializeAppLocal);
+
+    </script>
+</body>
+</html>
